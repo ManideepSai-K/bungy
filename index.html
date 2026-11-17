@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Bungy — rover mission lab</title><link rel="stylesheet" href="style.css"></head>
+<body><header><a class="brand" href="./">bungy<span> / rover mission lab</span></a><span class="badge">SIMULATION • 001</span></header>
+<main><section class="intro"><p class="eyebrow">SURFACE OPERATIONS / FIRST DRIVE</p><h1>A small rover.<br>A way through.</h1><p>Choose a landing point. Set a destination. Watch Python A* find a route around the rocks.</p></section>
+<div class="workspace"><section class="map-panel"><div class="panel-head"><span>01 / NAVIGATION MAP</span><span>12 × 12 m · synthetic</span></div>
+<canvas id="map" width="720" height="720" aria-label="Synthetic rover map. Use coordinate controls to choose endpoints without a mouse."></canvas>
+<div class="legend"><span>🟢 Start</span><span>⚑ Destination</span><span>■ Rock</span><span class="route-key">━ Planned route</span></div></section>
+<aside><p class="eyebrow">MISSION CONTROL</p><h2>Find your way.</h2>
+<label for="mode">Map click places</label><select id="mode"><option value="goal">Destination</option><option value="start">Rover start</option></select>
+<div class="coordinates"><fieldset><legend>Start · column / row</legend><input id="sx" type="number" min="0" max="11" value="1" aria-label="Start column"><input id="sy" type="number" min="0" max="11" value="9" aria-label="Start row"></fieldset>
+<fieldset><legend>Goal · column / row</legend><input id="gx" type="number" min="0" max="11" value="10" aria-label="Goal column"><input id="gy" type="number" min="0" max="11" value="2" aria-label="Goal row"></fieldset></div>
+<label class="check"><input id="seal" type="checkbox"> Seal the passage</label>
+<button id="plan" disabled>Loading Python…</button><div class="buttons"><button id="drive" disabled>Drive route</button><button id="reset">Reset mission</button></div>
+<p id="status" role="status" aria-live="polite">Preparing the planning engine. First load downloads Python.</p>
+<dl><div><dt>Route distance</dt><dd id="distance">—</dd></div><div><dt>Planning time</dt><dd id="time">—</dd></div><div><dt>Expanded cells</dt><dd id="expanded">—</dd></div></dl>
+<details><summary>What am I looking at?</summary><p>A fixed, fully known occupancy grid. Each square is 1 m. The rover is currently a point moving in four directions. Width, slopes, procedural terrain and terrain costs are next.</p><p>A* ranks cells by distance travelled plus estimated distance remaining. This demo uses Manhattan distance: horizontal steps + vertical steps.</p></details>
+</aside></div><footer>BUILT TO EXPLORE, BUILT TO LEARN <span>Educational simulation · not flight software</span></footer></main>
+<script src="app.js"></script></body></html>
