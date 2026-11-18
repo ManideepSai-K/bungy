@@ -2,7 +2,7 @@ let engine;
 async function initialize() {
   importScripts("https://cdn.jsdelivr.net/pyodide/v0.29.4/full/pyodide.js");
   engine = await loadPyodide();
-  const response = await fetch("simulator.py");
+  const response = await fetch("simulator.py?v=2");
   if (!response.ok) throw new Error("Cannot load simulation engine");
   await engine.runPythonAsync(await response.text());
   postMessage({type:"ready"});

@@ -6,7 +6,7 @@ const colours={distance:"#9edcfa",terrain:"#d7ed9b",quick:"#f3b6d0"};
 const names={distance:"Distance A*",terrain:"Terrain A*",quick:"Quick / weighted A*"};
 let state=null,results=[],selected="terrain",ready=false,busy=false,driving=false,started=false;
 let rover=null,timer,animation=0,animating=false;
-const worker=new Worker("worker.js");
+const worker=new Worker("worker.js?v=2");
 function message(text){$("status").textContent=text;}
 function log(text) {
   const li=document.createElement("li");li.textContent=text;$("log").prepend(li);
@@ -64,9 +64,9 @@ function renderCards(){
     const title=document.createElement("h3");title.textContent=names[r.mode];
     const badge=document.createElement("p");badge.textContent=reason(r.status);
     const stats=document.createElement("p");
-    stats.textContent=(r.path.length?r.distance+" m � score "+r.score.toFixed(1):"No executable route")+" � "+r.planning_ms.toFixed(1)+" ms";
+    stats.textContent=(r.path.length?r.distance+" m \u00b7 score "+r.score.toFixed(1):"No executable route")+" \u00b7 "+r.planning_ms.toFixed(1)+" ms";
     const effort=document.createElement("small");effort.textContent=r.expanded+" cells expanded";
-    const rejects=document.createElement("small");rejects.textContent=Object.entries(r.rejected).map(([k,v])=>k.toLowerCase().replaceAll("_"," ")+": "+v).join(" � ")||"No unsafe edges encountered";
+    const rejects=document.createElement("small");rejects.textContent=Object.entries(r.rejected).map(([k,v])=>k.toLowerCase().replaceAll("_"," ")+": "+v).join(" \u00b7 ")||"No unsafe edges encountered";
     card.append(title,badge,stats,effort,rejects);
     card.onclick=()=>{selected=r.mode;renderCards();controls();draw();};
     $("routes").append(card);
