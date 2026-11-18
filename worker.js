@@ -1,18 +1,17 @@
-/* Python runs off the UI thread. Runtime is pinned for reproducibility. */
 let engine;
 async function initialize() {
   importScripts("https://cdn.jsdelivr.net/pyodide/v0.29.4/full/pyodide.js");
   engine = await loadPyodide();
-  const response = await fetch("planner.py");
-  if (!response.ok) throw new Error("Cannot load planner.py");
+  const response = await fetch("simulator.py");
+  if (!response.ok) throw new Error("Cannot load simulation engine");
   await engine.runPythonAsync(await response.text());
-  postMessage({type: "ready"});
+  postMessage({type:"ready"});
 }
-initialize().catch(error => postMessage({type:"error", message:String(error)}));
-onmessage = async ({data}) => {
+initialize().catch(error=>postMessage({type:"error",message:String(error)}));
+onmessage=({data})=>{
   try {
-    engine.globals.set("mission_payload", JSON.stringify(data));
-    const result = JSON.parse(engine.runPython("plan_json(mission_payload)"));
-    postMessage({type:"result", result});
-  } catch(error) { postMessage({type:"error", message:String(error)}); }
+    engine.globals.set("mission_payload",JSON.stringify(data));
+    postMessage({type:"result",result:JSON.parse(engine.runPython("dispatch(mission_payload)"))});
+  } catch(error) {postMessage({type:"error",message:String(error)});}
 };
+

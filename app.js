@@ -1,105 +1,181 @@
-const $ = id => document.getElementById(id);
-const canvas = $("map"), ctx = canvas.getContext("2d"), size = 60;
-let grid, path = [], rover = null, frame = 0, ready = false, busy = false, timer;
-const inputs = ["sx","sy","gx","gy"];
-const point = prefix => [Number($(prefix+"x").value), Number($(prefix+"y").value)];
-function makeMap() {
-  grid = Array.from({length:12}, () => Array(12).fill(0));
-  for(let y=0;y<12;y++) if(y!==5 || $("seal").checked) grid[y][6]=1;
-  [[2,2],[3,2],[2,3],[9,8],[9,9],[10,9]].forEach(([x,y])=>grid[y][x]=1);
+const $=id=>document.getElementById(id);
+const canvas=$("map"),ctx=canvas.getContext("2d"),S=20;
+const configIds=["width","margin","clearance","slope","score","expansions","milliseconds"];
+const endpointIds=["sx","sy","gx","gy"];
+const colours={distance:"#9edcfa",terrain:"#d7ed9b",quick:"#f3b6d0"};
+const names={distance:"Distance A*",terrain:"Terrain A*",quick:"Quick / weighted A*"};
+let state=null,results=[],selected="terrain",ready=false,busy=false,driving=false,started=false;
+let rover=null,timer,animation=0,animating=false;
+const worker=new Worker("worker.js");
+function message(text){$("status").textContent=text;}
+function log(text) {
+  const li=document.createElement("li");li.textContent=text;$("log").prepend(li);
+  while($("log").children.length>30)$("log").lastChild.remove();
 }
-function stop() {cancelAnimationFrame(frame); rover=null;}
-function invalidate() {
-  stop(); path=[]; $("drive").disabled=true;
-  ["distance","time","expanded"].forEach(id=>$(id).textContent="—");
-  if(ready) $("status").textContent="Mission changed. Plan a route to continue.";
-  draw();
+function controls(){
+  const locked=busy||driving||started||animating;
+  [...configIds,...endpointIds,"seed"].forEach(id=>$(id).disabled=locked||!ready);
+  $("generate").disabled=busy||driving||animating||!ready;
+  $("plan").disabled=busy||driving||animating||!ready||!state;
+  $("plan").textContent=started?"Reset & compare":"Compare routes";
+  $("drive").disabled=busy||driving||animating||!results.some(r=>r.mode===selected&&r.status==="SUCCESS");
+  $("drive").textContent=started?"Resume mission":"Drive selected route";
+  $("pause").disabled=!driving;
 }
-function draw() {
-  ctx.clearRect(0,0,720,720);
-  for(let y=0;y<12;y++) for(let x=0;x<12;x++) {
-    ctx.fillStyle=["#98684c","#a17050","#aa7856","#92654a"][(x*7+y*3)%4];
-    ctx.fillRect(x*size,y*size,size,size);
-    ctx.strokeStyle="#201d1625";ctx.strokeRect(x*size,y*size,size,size);
-    if(grid[y][x]) {
-      ctx.fillStyle="#4c4438";ctx.beginPath();
-      ctx.moveTo(x*size+9,y*size+39);ctx.lineTo(x*size+15,y*size+12);
-      ctx.lineTo(x*size+40,y*size+7);ctx.lineTo(x*size+52,y*size+32);
-      ctx.lineTo(x*size+40,y*size+50);ctx.closePath();ctx.fill();
-      ctx.strokeStyle="#c8a68170";ctx.stroke();
-    }
+function error(text){
+  clearTimeout(timer);worker.terminate();ready=false;busy=false;driving=false;
+  cancelAnimationFrame(animation);message(text+" Reload to retry.");controls();$("drive").disabled=true;
+}
+function send(op,extra={}){
+  if(busy)return;busy=true;controls();
+  timer=setTimeout(()=>error("Engine request timed out."),15000);
+  worker.postMessage({op,...extra});
+}
+function inputsValid(){
+  return [...configIds,...endpointIds,"seed"].every(id=>$(id).value!==""&&$(id).checkValidity());
+}
+function endpoints(prefix){return [Number($(prefix+"x").value),Number($(prefix+"y").value)];}
+function invalidate(){
+  cancelAnimationFrame(animation);results=[];started=false;rover=null;renderCards();controls();
+  message("Mission changed. Compare routes to continue.");draw();
+}
+function updateTelemetry(){
+  ["travel","spent","replans","discoveries"].forEach(id=>$(id).textContent=
+    id==="travel"?state.travel+" m":id==="spent"?state.spent.toFixed(1):state[id]);
+}
+function reason(status){
+  const map={SUCCESS:"Ready",NO_ROUTE:"No connected safe route on this map",
+    SCORE_LIMIT:"Score budget exhausted during search",CANDIDATE_OVER_SCORE:"Candidate exceeds score limit; alternatives may exist",
+    TIME_BUDGET:"Search time budget exhausted",EXPANSION_BUDGET:"Cell expansion budget exhausted",
+    INTERNAL_ERROR:"Planner error",ARRIVED:"Destination reached. Mission complete.",
+    MISSION_SCORE_LIMIT:"Stopped: mission score limit would be exceeded.",
+    UNSEEN_HAZARD_STOP:"Stopped: ground truth guard detected a missed hazard.",
+    REPLAN_LIMIT:"Stopped: replanning limit reached.",STOPPED:"Mission stopped."};
+  if(map[status])return map[status];
+  if(status.startsWith("REPLAN_"))return "Replanning stopped: "+reason(status.slice(7));
+  return status.toLowerCase().replaceAll("_"," ");
+}
+function renderCards(){
+  $("routes").replaceChildren();
+  if(!results.length){const p=document.createElement("p");p.textContent="Compare routes to see distance, score and search effort.";$("routes").append(p);return;}
+  for(const r of results){
+    const card=document.createElement("button");card.className="route-card"+(r.mode===selected?" selected":"");
+    card.style.setProperty("--route",colours[r.mode]);card.disabled=busy||driving||started||r.status!=="SUCCESS";
+    const title=document.createElement("h3");title.textContent=names[r.mode];
+    const badge=document.createElement("p");badge.textContent=reason(r.status);
+    const stats=document.createElement("p");
+    stats.textContent=(r.path.length?r.distance+" m � score "+r.score.toFixed(1):"No executable route")+" � "+r.planning_ms.toFixed(1)+" ms";
+    const effort=document.createElement("small");effort.textContent=r.expanded+" cells expanded";
+    const rejects=document.createElement("small");rejects.textContent=Object.entries(r.rejected).map(([k,v])=>k.toLowerCase().replaceAll("_"," ")+": "+v).join(" � ")||"No unsafe edges encountered";
+    card.append(title,badge,stats,effort,rejects);
+    card.onclick=()=>{selected=r.mode;renderCards();controls();draw();};
+    $("routes").append(card);
   }
-  if(path.length) {
-    ctx.strokeStyle="#d9f29d";ctx.lineWidth=5;ctx.lineJoin="round";ctx.beginPath();
-    path.forEach(([x,y],i)=>i?ctx.lineTo((x+.5)*size,(y+.5)*size):ctx.moveTo((x+.5)*size,(y+.5)*size));ctx.stroke();
+}
+function draw(){
+  ctx.fillStyle="#332e25";ctx.fillRect(0,0,720,720);if(!state)return;
+  const world=state.world,layer=$("layer").value,h=layer==="truth"?world.truth:world.known;
+  $("maplabel").textContent=layer==="truth"?"OBSERVER / GROUND TRUTH":layer==="slope"?"ROVER / SLOPE":"ROVER / ESTIMATED ELEVATION";
+  for(let y=0;y<36;y++)for(let x=0;x<36;x++){
+    const gx=(h[y][Math.min(35,x+1)]-h[y][Math.max(0,x-1)])/2;
+    const gy=(h[Math.min(35,y+1)][x]-h[Math.max(0,y-1)][x])/2;
+    const slope=Math.atan(Math.hypot(gx,gy))*180/Math.PI;
+    const light=Math.max(16,Math.min(66,43+h[y][x]*9-gx*15-gy*8));
+    ctx.fillStyle=layer==="slope"?"hsl("+Math.max(0,100-slope*3)+",45%,"+(25+slope*.5)+"%)":"hsl(24,34%,"+light+"%)";
+    ctx.fillRect(x*S,y*S,S+1,S+1);
+    if(world.observed[y][x]){ctx.strokeStyle="#f3efd329";ctx.lineWidth=.7;ctx.strokeRect(x*S+1,y*S+1,S-2,S-2);}
   }
-  [["s","#c9efa2","S"],["g","#f3e2bd","G"]].forEach(([prefix,color,label])=>{
-    const [x,y]=point(prefix);if(!Number.isFinite(x+y))return;
-    ctx.fillStyle=color;ctx.beginPath();ctx.arc((x+.5)*size,(y+.5)*size,16,0,Math.PI*2);ctx.fill();
-    ctx.fillStyle="#202620";ctx.font="bold 15px system-ui";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(label,(x+.5)*size,(y+.5)*size);
-  });
-  if(rover) {
-    const [x,y]=rover;ctx.fillStyle="#172421";ctx.fillRect((x+.5)*size-16,(y+.5)*size-12,32,24);
-    ctx.fillStyle="#e9f5ca";ctx.fillRect((x+.5)*size-10,(y+.5)*size-8,20,16);
+  for(const [x,y,r] of world.rocks){
+    ctx.fillStyle="#332f28";ctx.beginPath();ctx.arc((x+.5)*S,(y+.5)*S,r*S,0,Math.PI*2);ctx.fill();
+    ctx.strokeStyle="#d5b89a70";ctx.lineWidth=1;ctx.stroke();
+  }
+  function line(path,color,width,dashed=false){
+    if(!path?.length)return;
+    ctx.strokeStyle=color;ctx.lineWidth=width;ctx.setLineDash(dashed?[6,5]:[]);ctx.beginPath();
+    path.forEach(([x,y],i)=>i?ctx.lineTo((x+.5)*S,(y+.5)*S):ctx.moveTo((x+.5)*S,(y+.5)*S));ctx.stroke();ctx.setLineDash([]);
+  }
+  if(!started)for(const r of results)line(r.path,colours[r.mode],r.mode===selected?3.5:1.5,r.status!=="SUCCESS");
+  else line(state.path,colours[selected],3.5);
+  const start=started?state.position:endpoints("s"),goal=endpoints("g");
+  for(const [p,label,c] of [[start,"S","#d8ed9a"],[goal,"G","#f6ebd1"]]){
+    if(!p.every(Number.isFinite))continue;
+    ctx.fillStyle=c;ctx.beginPath();ctx.arc((p[0]+.5)*S,(p[1]+.5)*S,8,0,7);ctx.fill();
+    ctx.fillStyle="#1b211b";ctx.font="bold 10px system-ui";ctx.textAlign="center";ctx.textBaseline="middle";ctx.fillText(label,(p[0]+.5)*S,(p[1]+.5)*S);
+  }
+  const p=rover||start,r=(Number($("width").value)/2+Number($("margin").value))*S;
+  if(p.every(Number.isFinite)&&Number.isFinite(r)){
+    ctx.strokeStyle="#fff4c9";ctx.lineWidth=1.5;ctx.beginPath();ctx.arc((p[0]+.5)*S,(p[1]+.5)*S,r,0,7);ctx.stroke();
+    ctx.fillStyle="#e6eecf";ctx.fillRect((p[0]+.5)*S-5,(p[1]+.5)*S-4,10,8);
   }
 }
-function lock(value) {
-  busy=value;inputs.forEach(id=>$(id).disabled=value);$("seal").disabled=value;
-  $("reset").disabled=value;$("plan").disabled=value||!ready;
+function animateMove(from,to,done){
+  animating=true;controls();
+  const began=performance.now();
+  function tick(now){
+    const t=Math.min(1,(now-began)/130);
+    rover=[from[0]+(to[0]-from[0])*t,from[1]+(to[1]-from[1])*t];draw();
+    if(t<1)animation=requestAnimationFrame(tick);else {animating=false;done();}
+  }animation=requestAnimationFrame(tick);
 }
-const worker = new Worker("worker.js");
-function fail(message) {
-  clearTimeout(timer);worker.terminate();ready=false;lock(false);
-  $("plan").textContent="Reload to retry";$("drive").disabled=true;
-  $("status").textContent=message;
-}
-timer=setTimeout(()=>fail("Python loading timed out. Check your internet connection and reload."),90000);
-worker.onerror=()=>fail("The planning worker failed. Reload to retry.");
+timer=setTimeout(()=>error("Python loading timed out."),90000);
+worker.onerror=()=>error("Simulation worker failed.");
 worker.onmessage=({data})=>{
-  clearTimeout(timer);
-  if(data.type==="ready") {
-    ready=true;lock(false);$("plan").textContent="Plan route →";
-    $("status").textContent="Ready. Place your endpoints or try the default mission.";
-  } else if(data.type==="error") fail("Python could not run. Check your connection and reload.");
-  else {
-    lock(false);const r=data.result;path=r.path||[];draw();
-    const messages={SUCCESS:"Route found. Ready to drive.",NO_ROUTE:"No route: the free cells do not connect these endpoints.",START_BLOCKED:"Start is inside a rock. Choose a free cell.",GOAL_BLOCKED:"Destination is inside a rock. Choose a free cell.",BUDGET_EXCEEDED:"Planning budget exceeded; this does not prove no route exists."};
-    $("status").textContent=messages[r.status]||"Invalid mission: "+r.status;
-    $("distance").textContent=r.distance_m==null?"—":r.distance_m+" m";
-    $("time").textContent=r.planning_ms==null?"—":r.planning_ms.toFixed(2)+" ms";
-    $("expanded").textContent=r.expanded??"—";$("drive").disabled=r.status!=="SUCCESS";
+  clearTimeout(timer);busy=false;
+  if(data.type==="error"){error("Simulation engine failed.");return;}
+  if(data.type==="ready"){ready=true;send("generate",{seed:Number($("seed").value)});return;}
+  const r=data.result;
+  if(r.event==="INVALID_INPUT"){driving=false;message(r.message);controls();return;}
+  const old=state?.position;state=r;updateTelemetry();
+  if(r.event==="GENERATED"){
+    results=[];started=false;driving=false;rover=null;$("comparisonTime").textContent="";
+    message("Surface ready. Set endpoints and compare routes.");log("Generated terrain seed "+r.world.seed+".");
+  }else if(r.event==="COMPARED"){
+    results=r.results;started=false;rover=null;
+    selected=results.find(v=>v.mode==="terrain"&&v.status==="SUCCESS")?.mode||results.find(v=>v.status==="SUCCESS")?.mode||"terrain";
+    $("comparisonTime").textContent="Total comparison: "+r.comparison_ms.toFixed(0)+" ms (including safety-map setup)";
+    message(results.some(v=>v.status==="SUCCESS")?"Select a successful route, then drive.":"No candidate accepted. See each outcome below.");
+    log("Compared three strategies on the same estimated map.");
+  }else if(r.event==="SELECTED"){
+    started=true;message("Driving. Nearby terrain is checked before each step.");
+  }else if(r.event==="REPLANNED"){
+    message("New terrain blocked the route. A replacement route is ready.");
+    log("Replanned after local sensing: "+r.last_plan.planning_ms.toFixed(1)+" ms.");
+  }else if(r.event==="MOVED"){
+    if(r.new_details)log("Local scan refined "+r.new_details+" terrain cells.");
+    message("Driving: "+r.travel+" m travelled.");
+    controls();renderCards();
+    animateMove(old,r.position,()=>{if(driving)send("step");else controls();});return;
+  }else{
+    driving=false;
+    message(reason(r.event));log(reason(r.event));
+    // A terminated mission requires a fresh comparison, not a misleading resume.
+    results=[];started=true;
   }
+  draw();renderCards();controls();
+  if(driving&&(r.event==="SELECTED"||r.event==="REPLANNED"))send("step");
+};
+$("generate").onclick=()=>{
+  if(!$("seed").checkValidity()||$("seed").value===""){message("Enter a valid seed.");return;}
+  cancelAnimationFrame(animation);started=false;send("generate",{seed:Number($("seed").value)});
 };
 $("plan").onclick=()=>{
-  if(inputs.some(id=>!$(id).checkValidity()||$(id).value==="")) {
-    $("status").textContent="Enter whole-number coordinates from 0 to 11.";return;
-  }
-  invalidate();lock(true);$("status").textContent="Planning…";
-  timer=setTimeout(()=>fail("Planning timed out. Reload to restart the engine."),10000);
-  worker.postMessage({grid,start:point("s"),goal:point("g")});
-};
-canvas.onclick=e=>{
-  if(busy)return;const rect=canvas.getBoundingClientRect();
-  const x=Math.min(11,Math.max(0,Math.floor((e.clientX-rect.left)/rect.width*12)));
-  const y=Math.min(11,Math.max(0,Math.floor((e.clientY-rect.top)/rect.height*12)));
-  const prefix=$("mode").value==="start"?"s":"g";
-  $(prefix+"x").value=x;$(prefix+"y").value=y;invalidate();
-};
-inputs.forEach(id=>$(id).oninput=invalidate);
-$("seal").onchange=()=>{makeMap();invalidate();};
-$("reset").onclick=()=>{
-  [1,9,10,2].forEach((v,i)=>$(inputs[i]).value=v);$("seal").checked=false;
-  makeMap();invalidate();
+  if(!inputsValid()){message("Check the ranges on mission settings.");return;}
+  cancelAnimationFrame(animation);driving=false;started=false;results=[];renderCards();message("Comparing bounded searches...");
+  send("compare",{start:endpoints("s"),goal:endpoints("g"),settings:Object.fromEntries(configIds.map(id=>[id,Number($(id).value)]))});
 };
 $("drive").onclick=()=>{
-  stop();$("drive").disabled=true;const began=performance.now();
-  function tick(now) {
-    const progress=Math.min((now-began)/300,path.length-1),i=Math.floor(progress),t=progress-i;
-    const a=path[i],b=path[Math.min(i+1,path.length-1)];
-    rover=[a[0]+(b[0]-a[0])*t,a[1]+(b[1]-a[1])*t];draw();
-    if(progress<path.length-1)frame=requestAnimationFrame(tick);
-    else {$("status").textContent="Destination reached. Mission complete.";$("drive").disabled=false;}
-  }
-  frame=requestAnimationFrame(tick);
+  driving=true;controls();renderCards();
+  if(started)send("step");else send("select",{mode:selected});
 };
-makeMap();draw();
+$("pause").onclick=()=>{driving=false;message("Paused. Resume or reset & compare.");controls();renderCards();};
+[...configIds,...endpointIds].forEach(id=>$(id).oninput=invalidate);
+$("layer").onchange=draw;
+canvas.onclick=e=>{
+  if(!ready||busy||driving||started)return;
+  const rect=canvas.getBoundingClientRect(),p=$("mode").value==="start"?"s":"g";
+  $(p+"x").value=Math.max(0,Math.min(35,Math.floor((e.clientX-rect.left)/rect.width*36)));
+  $(p+"y").value=Math.max(0,Math.min(35,Math.floor((e.clientY-rect.top)/rect.height*36)));
+  invalidate();
+};
+controls();draw();
+
