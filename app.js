@@ -18,7 +18,8 @@ function controls(){
   $("generate").disabled=busy||driving||animating||!ready;
   $("plan").disabled=busy||driving||animating||!ready||!state;
   $("plan").textContent=started?"Reset & compare":"Compare routes";
-  $("drive").disabled=busy||driving||animating||!results.some(r=>r.mode===selected&&r.status==="SUCCESS");
+  const ended=started&&!['SELECTED','MOVED','REPLANNED'].includes(state?.event);
+  $("drive").disabled=busy||driving||animating||ended||!results.some(r=>r.mode===selected&&r.status==="SUCCESS");
   $("drive").textContent=started?"Resume mission":"Drive selected route";
   $("pause").disabled=!driving;
 }
@@ -149,7 +150,7 @@ worker.onmessage=({data})=>{
     driving=false;
     message(reason(r.event));log(reason(r.event));
     // A terminated mission requires a fresh comparison, not a misleading resume.
-    results=[];started=true;
+    started=true;
   }
   draw();renderCards();controls();
   if(driving&&(r.event==="SELECTED"||r.event==="REPLANNED"))send("step");
